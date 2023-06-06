@@ -1,0 +1,307 @@
+---
+title: "Income Classification: Pre-processing"
+format: html
+editor: visual
+---
+
+## 
+
+## Load libraries
+
+```{r}
+library(tidyverse)
+library(scales)
+library(reshape2)
+source("src_functions.R")
+```
+
+\
+
+## Load raw data
+
+```{r}
+train = read_data(filepath = "../data/census_income_learn.csv")
+test = read_data(filepath = "../data/census_income_test.csv") 
+```
+
+## 
+
+## Preprocessing
+
+#### Add column names
+
+```{r}
+# define colnames
+colnames = c("age", "workclass", "industry_code", "occupation_code", "education", "wage_ph", "educ_last_wk", "marital_status", "maj_ind_code", "maj_occ_code", "race", "hispanic_origin", "sex", "union_member", "unemp_type", "emp_status", "capgain", "caploss", "stock_div", "tax_filer_status", "region_prev_res", "state_prev_res", "household_details", "household_summary", "instance_weight", "migration_msa", "migration_reg", "migration_within_reg", "live_here_year_ago", "migration_sunbelt", "employer_size", "presence_of_parents", "father_country", "mother_country", "self_country", "citizenship", "own_business", "vet_quest", "vet_benefit", "weeks_worked", "year", "income")
+
+# missingcolnames = c("adj_gross_inc", "fedtax", "total_earnings", "total_person_income", )
+
+# add colnames to datasets
+colnames(train) = colnames(test) = colnames
+```
+
+## EDA
+
+```{r}
+# target variable imbalance
+
+train %>% count(income) %>% 
+  mutate(income = ifelse(income==" - 50000.", "<= 50K", ">50K")) %>% 
+  mutate(perc = percent(n / sum(n), accuracy = 1, trim = FALSE)) %>% 
+  ggplot(aes(x = income, y = n)) +
+  geom_col(fill = "#009591") +
+  theme_classic() +
+  labs(x = "Income (in USD)", y = "Frequency", title = "Frequency of income categories") +
+  geom_text(aes(label = perc), vjust = 1.5, colour = "white")
+
+```
+
+```{r}
+train %>% ggplot(aes(x = wage_ph)) +
+  geom_histogram() +
+  theme_classic()
+```
+
+#### Preprocessing pipeline
+
+```{r}
+
+# cols to convert from int to chr
+cols_to_convert = c("industry_code", "occupation_code", "own_business", "vet_benefit", "year", "employer_size")
+
+# preprocess train data
+train = train %>% 
+  drop_instance_weight() %>% 
+  to_character(cols_to_convert) #%>% 
+  #drop_children()
+
+# preprocess test data
+test = test %>% 
+  drop_instance_weight() %>% 
+  to_character(cols_to_convert) %>% 
+  drop_children()
+  
+
+# write to processed_data folder
+write.csv(train, "../data/processed_data/processed_train.csv", row.names = F)
+write.csv(test, "../data/processed_data/processed_test.csv", row.names = F)
+
+# get names of character columns
+chr_columns = names(train)[sapply(train, is.character)]
+chr_columns
+
+# get names of numeric columns
+num_columns = base::setdiff(colnames(train), chr_columns)
+```
+
+### Correlation heatmap for numeric variables
+
+```{r}
+# Install and load the corrplot package
+# install.packages("corrplot")
+library(corrplot)
+
+# Compute the correlation matrix
+cor_matrix <- cor(train[, num_columns])
+
+# Create the correlation heatmap
+corrplot(cor_matrix, method = "color", type = "upper", order = "hclust", 
+         tl.cex = 0.7, tl.col = "black", diag = FALSE, addCoefasPercent = TRUE)
+
+```
+
+```{r}
+# create a correlation heatmap
+cormat <- round(cor(train[, num_columns]),2)
+
+melted_cormat <- reshape2::melt(cormat)
+
+
+# Get lower triangle of the correlation matrix
+  get_lower_tri<-function(cormat){
+    cormat[upper.tri(cormat)] <- NA
+    return(cormat)
+  }
+  # Get upper triangle of the correlation matrix
+  get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+  }
+
+upper_tri <- get_upper_tri(cormat)
+melted_cormat <- reshape2::melt(upper_tri, na.rm = TRUE)
+
+reorder_cormat <- function(cormat){
+# Use correlation between variables as distance
+dd <- as.dist((1-cormat)/2)
+hc <- hclust(dd)
+cormat <-cormat[hc$order, hc$order]
+}
+
+# Reorder the correlation matrix
+cormat <- reorder_cormat(cormat)
+upper_tri <- get_upper_tri(cormat)
+# Melt the correlation matrix
+melted_cormat <- reshape2::melt(upper_tri, na.rm = TRUE)
+# Create a ggheatmap
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradient2(low = "#EA650A", high = "#009591", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+    name="Pearson\nCorrelation") +
+  theme_minimal()+ # minimal theme
+ theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+    size = 7, hjust = 1), 
+    axis.text.y = element_text(size = 7))+
+ coord_fixed() +
+  labs(title = "Correlation heatmap for numeric variables")
+
+ggheatmap + 
+geom_text(aes(Var2, Var1, label = value), color = "black", size = 3) +
+theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  axis.ticks = element_blank()#,
+  #legend.justification = c(1, 0)#,
+  #legend.position = c(0.6, 0.7),
+  #legend.direction = "horizontal"
+  )#+
+  #guides(fill = guide_colorbar(barwidth = 7, barheight = 1,
+               # title.position = "top", title.hjust = 0.5))
+```
+
+### Remove children under 15
+
+The hours worked versus age graph can motivate this. Also, children under 14 are coded as Children in education.
+
+### Find duplicate observations
+
+```{r}
+# Identify duplicate rows and count their occurrences
+duplicate_counts = train %>%
+  group_by_all() %>%
+  summarise(count = n(), .groups = "drop") %>%
+  filter(count > 1)
+```
+
+```{r}
+# count values in character columns 
+column_counts <- lapply(train[chr_columns], function(col) table(col))
+```
+
+### Missing Values
+
+```{r}
+# find the number of missing values in each column
+colSums(is.na(train))
+```
+
+### Who are the Not in Universe people?
+
+```{r eval=F}
+missing_value = c("Not in Universe")
+a = train %>% 
+  filter()
+
+# replace all cells containing "Not in Universe" pattern with NA values
+train[train == "Not in Universe" | grepl("Not in Universe", train)] <- NA
+
+train <- train %>%
+  mutate_all(~ifelse(grepl("Not in universe", .), NA, .))# %>% 
+  #mutate_all(~ifelse("?", NA, .)) #%>% 
+  #mutate_all(~ifelse("NA", NA, .))
+
+
+
+
+
+```
+
+## Some EDA
+
+#### Datatypes for each column
+
+```{r}
+str(train)
+```
+
+Check for missing values. It seems these are all coded as "Not in Universe", and sometimes as "?" or "Not Identifiable"
+
+```{r}
+summary(train)
+```
+
+```{r}
+train %>% ggplot(aes(x = income)) +
+  geom_bar()
+
+colnames(train)
+```
+
+## Missing values
+
+Let's first count the number of missing values in each column.
+
+```{r}
+column_counts <- lapply(train, function(col) table(col))
+```
+
+## EDA Ideas
+
+-   Income wrt sex
+
+-   Income wrt education (group into two)
+
+```{r}
+train %>% count(sex, income)
+train %>% ggplot(aes(x = income, y = sex))
+```
+
+## Questions about the data
+
+```{r}
+hist(train$weeks_worked)
+```
+
+Why are there so many workers with 0 weeks worked? Could they be children? Let's do a scatterplot to investigate.
+
+```{r}
+train %>% ggplot(aes(x = age, y = weeks_worked)) +
+  geom_point(color="#009591") +
+  theme_classic() +
+  labs(title = "Number of weeks worked by age", y = "Number of Weeks Worked", x = "Age") +
+  geom_vline(xintercept = 15, color = "#EA650A", size = 1) +
+  scale_x_continuous(breaks = c(seq(0, 10, by = 25), 15, seq(25, max(train$age), by = 25)))
+
+```
+
+What is the distribution of age?
+
+```{r}
+train %>% ggplot(aes(x=age)) +
+  geom_histogram() +
+  geom_vline(xintercept = 15, color = "red", linetype = "dotted", size = 1.5) +
+  theme_classic() +
+  labs(title = "Distribution of Age")
+```
+
+How many individuals are under 15 years of age? Answer: 24%
+
+```{r}
+train %>%
+  mutate(age15 = ifelse(age<15, 0, 1)) %>% 
+  count(age15) %>% 
+  mutate(`prop (%)` = round(100 * n/sum(n)))
+```
+
+Are these individuals all earning under 50K? Answer: Yes.
+
+```{r}
+train %>%
+  mutate(age15 = ifelse(age<15, 0, 1)) %>% 
+  count(age15, income)
+
+```

@@ -1,0 +1,30 @@
+---
+title: "Income Classification: Modeling"
+format: html
+editor: visual
+---
+
+## Load libraries
+
+```{r}
+library(tidyverse) 
+source("src_functions.R")
+```
+
+## Load processed data
+
+```{r}
+# fix the read_data function, maybe get rid of it. It doesn't allow header=T
+
+train = read.csv(file = "../../dataiku_interview/data/processed_data/processed_train.csv")
+test = read.csv(file = "../../dataiku_interview/data/processed_data/processed_test.csv") 
+```
+
+## Logistic Regression
+
+```{r}
+
+# Train the logistic regression model
+model = glm(income ~ ., data = train, family = binomial)
+
+```
